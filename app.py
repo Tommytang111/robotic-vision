@@ -9,11 +9,10 @@ from PIL import Image
 from ultralytics import YOLO
 from pathlib import Path
 from fastapi import FastAPI, UploadFile, File, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse
 import uvicorn
 import json
 import io
-from typing import List
 import tempfile
 import os
 import uvicorn
