@@ -21,7 +21,7 @@ import uvicorn
 app = FastAPI(title="Clothing Detection API", description="API for detecting clothing items in images using YOLOv11 model.")
 
 #Load model
-model = YOLO("../models/yolov11m-fashionpedia.pt", task="detect")
+model = YOLO("/Docker_Image/models/yolov11m-fashionpedia.pt", task="detect")
 
 #Home route for basic API information
 @app.get("/")
