@@ -1,27 +1,64 @@
 #Tommy Tang
 #June 2025
-#Clothing Detection API
+#Clothing Detection API Prototype
 
 #Libraries
-import numpy as np
 import cv2
+import numpy as np
 from PIL import Image
 from ultralytics import YOLO
-from pathlib import Path
 from fastapi import FastAPI, UploadFile, File, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
-import uvicorn
+import asyncio
 import json
 import io
 import tempfile
 import os
 import uvicorn
 
+from segmentation import DEFAULT_PROMPTS, OptimizedSAM3Segmenter, load_predictor
+
 #Initialize FastAPI app
 app = FastAPI(title="Clothing Detection API", description="API for detecting clothing items in images using YOLOv11 model.")
 
-#Load model
-model = YOLO("/Docker_Image/models/yolov11m-fashionpedia.pt", task="detect")
+#Weights are located by environment variable so the same code runs unchanged on a
+#workstation and inside a container. The default is repo-relative; the image sets it
+#to the absolute path the weights were downloaded to at build time.
+YOLO_MODEL_PATH = os.environ.get(
+    "YOLO_MODEL_PATH", "models/yolov11m-fashionpedia.pt"
+)
+
+#Loaded at import rather than on demand: an instance with no detector is of no use to
+#anyone, so it is better to fail at startup than to accept traffic that cannot be served.
+model = YOLO(YOLO_MODEL_PATH, task="detect")
+
+#SAM3 is loaded on first use rather than at import, so the API still boots and serves
+#its detection routes when the segmentation weights are missing.
+_sam3_predictor = None
+
+#SAM3SemanticPredictor carries per-image state through set_image(), so concurrent
+#connections sharing one predictor would interleave and corrupt each other's results.
+sam3_lock = asyncio.Lock()
+
+
+def get_predictor():
+    """
+    Return the process-wide SAM3 predictor, loading it on first call
+    """
+    global _sam3_predictor
+    if _sam3_predictor is None:
+        _sam3_predictor = load_predictor()
+    return _sam3_predictor
+
+#Liveness probe. Deliberately does no inference: a probe that ran the model would turn
+#every health check into GPU/CPU work and would report unhealthy under nothing worse
+#than load.
+@app.get("/health")
+async def health():
+    """
+    Liveness check for container orchestrators
+    """
+    return {"status": "ok", "detector_loaded": model is not None}
 
 #Home route for basic API information
 @app.get("/")
@@ -34,12 +71,17 @@ async def home():
         "version": "1.0.0",
         "endpoints": {
             "/": "API information",
+            "/health": "Liveness check",
             "/predict-image": "Upload image for clothing detection",
             "/predict-video": "Upload video for clothing detection",
             "/webcam": "Webcam streaming page",
-            "ws/webcam": "WebSocket for real-time webcam detection"
+            "ws/webcam": "WebSocket for real-time webcam detection",
+            "ws/segment": "WebSocket for real-time prompt-driven clothing segmentation"
         },
-        "model": "YOLOv11m trained on Fashionpedia dataset"
+        "models": {
+            "detection": "YOLOv11m trained on Fashionpedia dataset",
+            "segmentation": "SAM3 semantic predictor, loaded on first use"
+        }
     }
 
 #Endpoint for image uploads
@@ -193,8 +235,9 @@ async def webcam_page():
                     stream = await navigator.mediaDevices.getUserMedia({ video: true });
                     video.srcObject = stream;
                     
-                    // Connect to WebSocket
-                    ws = new WebSocket('ws://localhost:8000/ws/webcam');
+                    // Connect to WebSocket on whatever host served this page
+                    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                    ws = new WebSocket(`${wsProtocol}//${window.location.host}/ws/webcam`);
                     
                     ws.onopen = function(event) {
                         console.log('WebSocket connected');
@@ -265,96 +308,126 @@ async def webcam_page():
     """
     return HTMLResponse(content=html_content)
 
+def detect_frame(image):
+    """
+    Run the detector on one image and return serialisable detections.
+
+    Kept synchronous so it can be handed to a worker thread: ultralytics blocks,
+    and calling it directly inside a coroutine would stall every other connection.
+    """
+    results = model.predict(image, conf=0.25, verbose=False)
+
+    detections = []
+    if len(results) > 0:
+        result = results[0]
+        if result.boxes is not None:
+            for box in result.boxes:
+                detection = {
+                    "class_id": int(box.cls[0]),
+                    "class_name": model.names[int(box.cls[0])],
+                    "confidence": float(box.conf[0]),
+                    "bbox": box.xyxy[0].tolist()
+                }
+                detections.append(detection)
+
+    return detections
+
 @app.websocket("/ws/webcam")
 async def websocket_webcam(websocket: WebSocket):
     """
     WebSocket endpoint for real-time webcam detection
     """
     await websocket.accept()
-    
+
     try:
         while True:
             # Receive image data from client
             data = await websocket.receive_bytes()
-            
+
             # Convert bytes to image
             image = Image.open(io.BytesIO(data))
             if image.mode != 'RGB':
                 image = image.convert('RGB')
-            
-            # Run prediction
-            results = model.predict(image, conf=0.25, verbose=False)
-            
-            # Extract detections
-            detections = []
-            if len(results) > 0:
-                result = results[0]
-                if result.boxes is not None:
-                    for box in result.boxes:
-                        detection = {
-                            "class_id": int(box.cls[0]),
-                            "class_name": model.names[int(box.cls[0])],
-                            "confidence": float(box.conf[0]),
-                            "bbox": box.xyxy[0].tolist()
-                        }
-                        detections.append(detection)
-            
+
+            # Run prediction off the event loop
+            detections = await asyncio.to_thread(detect_frame, image)
+
             # Send results back to client
             response = {
                 "detections_count": len(detections),
                 "detections": detections
             }
-            
+
             await websocket.send_text(json.dumps(response))
-            
+
     except WebSocketDisconnect:
         print("WebSocket disconnected")
     except Exception as e:
         print(f"WebSocket error: {e}")
 
+@app.websocket("/ws/segment")
+async def websocket_segment(websocket: WebSocket):
+    """
+    WebSocket endpoint for real-time prompt-driven clothing segmentation.
+
+    Returns mask geometry rather than masks. Each detection carries a bounding box,
+    a mask centroid, a pixel area and a simplified outline, which is what a caller
+    needs to locate a garment; the mask itself is far too large to send per frame.
+    """
+    await websocket.accept()
+
+    #Tracking state lives on the segmenter and must persist between frames but never
+    #leak between clients, so each connection gets its own. The loaded model is shared.
+    #Loading happens in a worker thread under the lock: the first connection would
+    #otherwise stall every other client while the weights load, and two simultaneous
+    #first connections would each load their own copy.
+    try:
+        async with sam3_lock:
+            predictor = await asyncio.to_thread(get_predictor)
+
+        segmenter = OptimizedSAM3Segmenter(
+            predictor=predictor,
+            clothing_prompts=DEFAULT_PROMPTS,
+            device="cpu",
+        )
+    except Exception as e:
+        print(f"SAM3 unavailable: {e}")
+        await websocket.send_text(json.dumps({"error": f"SAM3 model unavailable: {e}"}))
+        await websocket.close()
+        return
+
+    try:
+        while True:
+            # Receive image data from client
+            data = await websocket.receive_bytes()
+
+            # Decode to a BGR frame, which is what the segmenter expects
+            frame = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+            if frame is None:
+                await websocket.send_text(json.dumps({"error": "Could not decode frame"}))
+                continue
+
+            # Serialise SAM3 access across connections, and keep the blocking call
+            # off the event loop
+            async with sam3_lock:
+                result = await asyncio.to_thread(
+                    segmenter.process_frame, frame, False
+                )
+
+            response = {
+                "mode": result["mode"],
+                "detections_count": len(result["detections"]),
+                "detections": result["detections"]
+            }
+
+            await websocket.send_text(json.dumps(response))
+
+    except WebSocketDisconnect:
+        print("Segmentation WebSocket disconnected")
+    except Exception as e:
+        print(f"Segmentation WebSocket error: {e}")
+
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
-
-
-""" 
-#Old code for webcam detection
-cap = cv2.VideoCapture(0)
-
-if not cap.isOpened():
-    print("Error: Could not open webcam/video.")
-    exit()
-    
-width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-fps = int(cap.get(cv2.CAP_PROP_FPS))
-
-print(f"Video Properties: {width}x{height}, {fps} FPS")
-
-#Save video
-fourcc = cv2.VideoWriter_fourcc(*'mp4v")
-out = cv2.VideoWriter("output_detection.mp4", fourcc, fps, (width, height))
-
-#Video processing loop
-while True:
-    ret, frame = cap.read()
-    if not ret:
-        print("End of video")
-        break
-    
-    #Predict on frame
-    results = model.predict(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), conf=0.25)
-    #Plot predictions on frame
-    results = results[0]
-    annotated_frame = results.plot()
-    #Convert back to BGR for OpenCV display
-    bgr_annotated_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR)
-    #out.write(bgr_annotated_frame) # Uncomment to save video with detections
-    #Show annotated frame
-    cv2.imshow("Clothing Detection", bgr_annotated_frame)
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
-
-cap.release()
-out.release()
-cv2.destroyAllWindows()
-"""
+    #Container platforms inject the port to listen on. Binding 0.0.0.0 is what makes the
+    #server reachable from outside the container at all.
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))

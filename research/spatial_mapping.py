@@ -1,4 +1,4 @@
-#3D Spatial Mapping for Crazyflie 2.0 Drone Cleaner Prototype
+#3D Spatial Mapping for Robot Prototype
 #Tommy Tang
 #Feb 10 2026
 
@@ -28,7 +28,7 @@ class VisualOdometry:
         self.detector = cv2.ORB_create(nfeatures=2000)
         self.matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
         
-        # Camera intrinsics (approximate for webcam - will need calibration for real drone)
+        # Camera intrinsics (approximate for webcam - will need calibration for the target camera)
         self.focal_length = 500  # pixels
         self.cx = 320  # principal point x
         self.cy = 240  # principal point y

@@ -1,0 +1,13 @@
+# Service dependencies (everything in the Docker image).
+#   pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu
+# TODO: pin exact versions from `pip freeze` after the first successful build.
+
+fastapi>=0.110
+uvicorn[standard]>=0.29        # [standard] provides the WebSocket implementation
+python-multipart>=0.0.9        # required by FastAPI for file uploads
+
+ultralytics>=8.3.0             # pulls torch, torchvision, opencv-python
+torch>=2.2
+
+numpy>=1.26
+pillow>=10.0

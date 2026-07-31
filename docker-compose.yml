@@ -1,0 +1,24 @@
+# Local development.
+#   YOLO_WEIGHTS_URL=https://.../yolov11m-fashionpedia.pt docker compose up --build
+
+services:
+  api:
+    build:
+      context: .
+      args:
+        YOLO_WEIGHTS_URL: ${YOLO_WEIGHTS_URL:?set YOLO_WEIGHTS_URL to a reachable .pt}
+        SAM3_WEIGHTS_URL: ${SAM3_WEIGHTS_URL:-}
+      # Must match the deployment target, or Azure rejects an arm64 image.
+      platforms:
+        - linux/amd64
+    ports:
+      - "8000:8000"
+    environment:
+      PORT: 8000
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+    restart: unless-stopped

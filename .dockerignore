@@ -1,0 +1,34 @@
+# Only service/ and requirements.txt belong in the build context.
+
+client/
+research/
+notebooks/
+
+.git/
+.gitignore
+.github/
+README.md
+docker-compose.yml
+requirements-client.txt
+requirements-research.txt
+
+# Weights are downloaded during the build, never copied from the host.
+models/
+*.pt
+*.onnx
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+
+.ipynb_checkpoints/
+.DS_Store
+.vscode/
+.idea/
+
+*.mp4
+*.avi
+*.npy
+runs/

@@ -1,0 +1,13 @@
+# Offline dependencies for research/spatial_mapping.py and the notebooks.
+# Not installed into the service image.
+
+torch>=2.2
+transformers>=4.40
+open3d>=0.18
+opencv-python>=4.9
+numpy>=1.26
+scipy>=1.12
+matplotlib>=3.8
+
+jupyter>=1.0
+ultralytics>=8.3.0

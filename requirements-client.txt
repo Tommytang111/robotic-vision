@@ -1,0 +1,6 @@
+# Camera-device dependencies for client/robot_client.py.
+# Capture and encode only - all inference happens server-side.
+
+opencv-python>=4.9
+numpy>=1.26
+websockets>=12.0
