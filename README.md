@@ -254,8 +254,7 @@ Dockerfile        Multi-stage, CPU-only torch, weights via build arg
 
 ## Limitations
 
-This repo only serves as a demo and aims to showcase a previous version of a private project. Therefore, many settings/choices  
-have been adjusted to be impractical for actual use: 
+This repo only serves as a demo and aims to showcase a previous version of a private project. Therefore, many settings/choices have been adjusted to be impractical for actual use: 
 
 - **Weights are not distributed with this repo.** Supply your own or retrain from the
   notebooks.
