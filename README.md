@@ -10,14 +10,6 @@ That split is what lets hardware too small to host a vision model still use one.
 
 ---
 
-## Demo
-
-<!-- TODO: replace with a demo GIF or screenshot of the /webcam page or client --show window -->
-> _Demo recording pending._ Run `python client/robot_client.py --show` against a live
-> server to reproduce; see [Quickstart](#quickstart).
-
----
-
 ## How it works
 
 ```mermaid
@@ -86,7 +78,7 @@ flowchart TD
 | Directory | Purpose | Containerised |
 |---|---|---|
 | `service/` | FastAPI app + SAM3 segmenter. The deployable unit. | Yes |
-| `client/` | Streaming client for the camera device. Needs only OpenCV, NumPy, websockets. | No — defeats the purpose |
+| `client/` | Streaming client for the camera device. Needs only OpenCV, NumPy, websockets. | No |
 | `research/` | Monocular depth, ORB visual odometry, 3D occupancy grid. Needs Open3D and a display. | No |
 | `notebooks/` | Training runs and experiments. | No |
 
@@ -98,7 +90,7 @@ build rather than by convention.
 ## Quickstart
 
 ```bash
-git clone https://github.com/<you>/Robotic-Vision.git
+git clone https://github.com/Tommytang111/Robotic-Vision.git
 cd Robotic-Vision
 
 python -m venv .venv && source .venv/bin/activate
@@ -194,13 +186,13 @@ az containerapp up \
 Three settings that matter:
 
 - **`--min-replicas 1`.** Scale-to-zero means every cold start reloads the detector into
-  memory before the first request can be served. For a demo someone might click on, keep
+  memory before the first request can be served. For this demo, keep
   one replica warm.
 - **WebSockets** are supported on Container Apps ingress and need no extra flag, but the
   client must use `wss://` against the public FQDN, not `ws://`. The browser page at
   `/webcam` derives this from `window.location` automatically.
-- **Memory.** Torch plus the detector needs headroom; 4Gi is a safe starting point and
-  2Gi is tight.
+- **Memory.** Torch plus the detector needs headroom; 4GiB is a safe starting point and
+  2GiB is tight.
 
 ---
 
@@ -262,7 +254,8 @@ Dockerfile        Multi-stage, CPU-only torch, weights via build arg
 
 ## Limitations
 
-Stated plainly, because they define where this project currently stops:
+This repo only serves as a demo and aims to showcase a previous version of a private project. Therefore, many settings/choices  
+have been adjusted to be impractical for actual use: 
 
 - **Weights are not distributed with this repo.** Supply your own or retrain from the
   notebooks.
@@ -273,8 +266,8 @@ Stated plainly, because they define where this project currently stops:
 - **`research/spatial_mapping.py` is not wired into the API.** It runs standalone against
   a local webcam.
 - **The 2D→3D step is not implemented.** Projecting a mask centroid through the depth map
-  and camera pose to get a world coordinate is the obvious next step and is not yet
-  written. Detection and mapping currently exist side by side, not joined.
+  and camera pose to get a world coordinate is the obvious next step and is not included. 
+  Detection and mapping currently exist side by side, not joined.
 - **Monocular depth has scale ambiguity.** The visual odometry in `spatial_mapping.py`
   uses approximate webcam intrinsics; real metric distances need camera calibration.
 - **`/predict-video` caps at 100 frames** and buffers the upload in memory — a demo path,
@@ -286,6 +279,3 @@ Stated plainly, because they define where this project currently stops:
 
 FastAPI · Uvicorn · Ultralytics YOLOv11 · SAM3 · PyTorch · OpenCV · Open3D · Docker · Azure Container Apps
 
-## License
-
-<!-- TODO: add a LICENSE file - MIT is the usual choice for a portfolio project -->
